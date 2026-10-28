@@ -2,101 +2,125 @@ package com.joyboy.islandnotifier
 
 import android.Manifest
 import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.MediaMetadata
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
 class MainActivity : Activity() {
 
-    private val channelId = "island_test"
-    private var session: MediaSession? = null
+    private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        askNotificationPermission()
-        createChannel()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
         }
-        val info = TextView(this).apply {
-            text = "Island test.\nTap a button and watch the Origin Island."
-            textSize = 16f
+        status = TextView(this).apply { textSize = 18f }
+
+        val btnStart = Button(this).apply {
+            text = "Start"
+            setOnClickListener { onStartClicked() }
         }
-        val btnNormal = Button(this).apply {
-            text = "Test 1: normal notification"
-            setOnClickListener { postNormal() }
+        val btnStop = Button(this).apply {
+            text = "Stop"
+            setOnClickListener {
+                setEnabled(false)
+                stopService(Intent(this@MainActivity, IslandService::class.java))
+                refresh()
+            }
         }
-        val btnMedia = Button(this).apply {
-            text = "Test 2: media-style notification"
-            setOnClickListener { postMedia() }
+        val btnTest = Button(this).apply {
+            text = "Send test to island"
+            setOnClickListener {
+                try {
+                    val i = Intent(this@MainActivity, IslandService::class.java)
+                        .setAction(IslandService.ACTION_TEST)
+                    startForegroundService(i)
+                } catch (e: Exception) {
+                    // blocked or failed
+                }
+            }
         }
-        root.addView(info)
-        root.addView(btnNormal)
-        root.addView(btnMedia)
+        val btnBattery = Button(this).apply {
+            text = "Battery settings"
+            setOnClickListener {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
+        }
+
+        root.addView(status)
+        root.addView(btnStart)
+        root.addView(btnStop)
+        root.addView(btnTest)
+        root.addView(btnBattery)
         setContentView(root)
+        refresh()
     }
 
-    private fun askNotificationPermission() {
+    override fun onResume() {
+        super.onResume()
+        refresh()
+    }
+
+    private fun prefs() = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+
+    private fun setEnabled(on: Boolean) {
+        prefs().edit().putBoolean("enabled", on).apply()
+    }
+
+    private fun refresh() {
+        status.text = if (prefs().getBoolean("enabled", false))
+            "Status: ON (auto-starts after reboot)"
+        else
+            "Status: OFF"
+    }
+
+    private fun missingPermissions(): Array<String> {
+        val list = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) list.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= 31 &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) list.add(Manifest.permission.BLUETOOTH_CONNECT)
+        return list.toTypedArray()
+    }
+
+    private fun onStartClicked() {
+        val missing = missingPermissions()
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing, 1)
+        } else {
+            startIsland()
         }
     }
 
-    private fun createChannel() {
-        val nm = getSystemService(NotificationManager::class.java)
-        val ch = NotificationChannel(
-            channelId, "Island test", NotificationManager.IMPORTANCE_HIGH
-        )
-        nm.createNotificationChannel(ch)
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        startIsland() // start anyway; missing permissions only reduce features
     }
 
-    private fun postNormal() {
-        val n = Notification.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Bluetooth connected")
-            .setContentText("Test device")
-            .setTimeoutAfter(4000)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(1, n)
-    }
-
-    private fun postMedia() {
-        val s = session ?: MediaSession(this, "IslandTest").also { session = it }
-        s.setMetadata(
-            MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, "Bluetooth connected")
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, "Test device")
-                .build()
-        )
-        s.setPlaybackState(
-            PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY_PAUSE)
-                .setState(PlaybackState.STATE_PLAYING, 0, 1f)
-                .build()
-        )
-        s.isActive = true
-
-        val n = Notification.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Bluetooth connected")
-            .setContentText("Test device")
-            .setStyle(Notification.MediaStyle().setMediaSession(s.sessionToken))
-            .setTimeoutAfter(4000)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(2, n)
+    private fun startIsland() {
+        setEnabled(true)
+        try {
+            startForegroundService(Intent(this, IslandService::class.java))
+        } catch (e: Exception) {
+            // blocked by system
+        }
+        refresh()
     }
 }

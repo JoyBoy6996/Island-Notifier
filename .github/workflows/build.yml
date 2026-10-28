@@ -16,9 +16,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7
+          gradle-version: "8.7"
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
@@ -26,4 +29,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: IslandNotifier-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
